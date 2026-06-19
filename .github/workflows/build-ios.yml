@@ -1,0 +1,66 @@
+name: Build VisionClaw iOS IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      openClawHost:
+        description: 'OpenClaw host (Tailscale IP)'
+        required: true
+        default: 'http://100.111.183.96'
+      openClawPort:
+        description: 'OpenClaw port'
+        required: true
+        default: '18889'
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Write Secrets.swift
+        run: |
+          cat > samples/CameraAccess/CameraAccess/Secrets.swift << 'EOF'
+          import Foundation
+          enum Secrets {
+            static let geminiAPIKey         = "${{ secrets.GEMINI_API_KEY }}"
+            static let openClawHost         = "${{ github.event.inputs.openClawHost }}"
+            static let openClawPort         = ${{ github.event.inputs.openClawPort }}
+            static let openClawHookToken    = "${{ secrets.OPENCLAW_HOOK_TOKEN }}"
+            static let openClawGatewayToken = "${{ secrets.OPENCLAW_GATEWAY_TOKEN }}"
+            static let webrtcSignalingURL   = ""
+          }
+          EOF
+
+      - name: Build archive (unsigned)
+        run: |
+          cd samples/CameraAccess
+          xcodebuild \
+            -project CameraAccess.xcodeproj \
+            -scheme CameraAccess \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath $RUNNER_TEMP/CameraAccess.xcarchive \
+            archive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcpretty || true
+
+      - name: Package IPA
+        run: |
+          mkdir -p $RUNNER_TEMP/Payload
+          cp -r "$RUNNER_TEMP/CameraAccess.xcarchive/Products/Applications/CameraAccess.app" \
+                $RUNNER_TEMP/Payload/
+          cd $RUNNER_TEMP
+          zip -r VisionClaw-Ares.ipa Payload/
+          echo "IPA size: $(du -sh VisionClaw-Ares.ipa | cut -f1)"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: VisionClaw-Ares
+          path: ${{ runner.temp }}/VisionClaw-Ares.ipa
+          retention-days: 14
