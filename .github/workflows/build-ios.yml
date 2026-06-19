@@ -23,6 +23,9 @@ jobs:
           }
           EOF
 
+      - name: Install xcpretty
+        run: gem install xcpretty --no-document 2>/dev/null || true
+
       - name: Build archive (unsigned)
         run: |
           cd samples/CameraAccess
@@ -30,17 +33,15 @@ jobs:
           xcodebuild \
             -project CameraAccess.xcodeproj \
             -scheme CameraAccess \
-            -configuration Release \
+            -configuration Debug \
             -sdk iphoneos \
             -archivePath $RUNNER_TEMP/CameraAccess.xcarchive \
             archive \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            OTHER_SWIFT_FLAGS="-Xfrontend -debug-constraints" \
-            2>&1 | tee /tmp/xcodebuild.log
-          echo "--- ERRORS ---"
-          grep -E "error:" /tmp/xcodebuild.log || echo "(no error: lines found)"
+            2>&1 | tee /tmp/xcodebuild.log | xcpretty --color || \
+          (echo "=== FULL ERRORS ===" && grep -E "error:|ARCHIVE FAILED" /tmp/xcodebuild.log; exit 1)
 
       - name: Upload build log on failure
         if: failure()
