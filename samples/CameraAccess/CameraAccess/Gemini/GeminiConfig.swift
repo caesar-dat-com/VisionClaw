@@ -1,4 +1,6 @@
 import Foundation
+import AVFoundation
+import Speech
 
 enum GeminiConfig {
   static let websocketBaseURL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
@@ -54,9 +56,8 @@ enum GeminiConfig {
     return URL(string: "\(websocketBaseURL)?key=\(apiKey)")
   }
 
-  static var isConfigured: Bool {
-    return apiKey != "YOUR_GEMINI_API_KEY" && !apiKey.isEmpty
-  }
+  // Ares mode: always configured — no Gemini key needed
+  static var isConfigured: Bool { true }
 
   static var isOpenClawConfigured: Bool {
     return openClawGatewayToken != "YOUR_OPENCLAW_GATEWAY_TOKEN"
@@ -65,18 +66,8 @@ enum GeminiConfig {
   }
 }
 
-// MARK: - Config override: Ares mode requires no Gemini key
-extension GeminiConfig {
-    static var isConfigured: Bool { true }
-    static var isOpenClawConfigured: Bool {
-        !Secrets.openClawHost.contains("YOUR_") && Secrets.openClawPort > 0
-    }
-}
-
 // MARK: - AresLiveService (drop-in for GeminiLiveService, no Gemini required)
 // Uses Apple SFSpeechRecognizer (STT) + OpenClaw/Claude + AVSpeechSynthesizer (TTS)
-import AVFoundation
-import Speech
 
 @MainActor
 class AresLiveService: ObservableObject {
