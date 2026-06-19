@@ -65,11 +65,148 @@ enum GeminiConfig {
   }
 }
 
-// MARK: - Ares mode (no Gemini key required)
+// MARK: - Config override: Ares mode requires no Gemini key
 extension GeminiConfig {
-    // Override: session always configured when using AresLiveService
     static var isConfigured: Bool { true }
     static var isOpenClawConfigured: Bool {
         !Secrets.openClawHost.contains("YOUR_") && Secrets.openClawPort > 0
+    }
+}
+
+// MARK: - AresLiveService (drop-in for GeminiLiveService, no Gemini required)
+// Uses Apple SFSpeechRecognizer (STT) + OpenClaw/Claude + AVSpeechSynthesizer (TTS)
+import AVFoundation
+import Speech
+
+@MainActor
+class AresLiveService: ObservableObject {
+    @Published var connectionState: GeminiConnectionState = .disconnected
+    @Published var isModelSpeaking: Bool = false
+
+    var onAudioReceived: ((Data) -> Void)?
+    var onTurnComplete: (() -> Void)?
+    var onInterrupted: (() -> Void)?
+    var onDisconnected: ((String?) -> Void)?
+    var onInputTranscription: ((String) -> Void)?
+    var onOutputTranscription: ((String) -> Void)?
+    var onToolCall: ((GeminiToolCall) -> Void)?
+    var onToolCallCancellation: ((GeminiToolCallCancellation) -> Void)?
+
+    private let bridge = OpenClawBridge()
+    private let synth = AVSpeechSynthesizer()
+    private var speechRecognizer: SFSpeechRecognizer?
+    private var recRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var recTask: SFSpeechRecognitionTask?
+    private var engine: AVAudioEngine?
+    private var silenceTimer: Timer?
+    private var pending: String = ""
+    private var lastFrame: UIImage?
+
+    func connect() async -> Bool {
+        await withCheckedContinuation { c in
+            SFSpeechRecognizer.requestAuthorization { _ in c.resume() }
+        }
+        await withCheckedContinuation { c in
+            AVAudioApplication.requestRecordPermission { _ in c.resume() }
+        }
+        await bridge.checkConnection()
+        guard bridge.connectionState == .connected else {
+            connectionState = .error("Ares gateway unreachable")
+            return false
+        }
+        bridge.resetSession()
+        startSTT()
+        connectionState = .ready
+        return true
+    }
+
+    func disconnect() {
+        stopSTT()
+        connectionState = .disconnected
+        isModelSpeaking = false
+    }
+
+    func sendAudio(data: Data) {}
+    func sendVideoFrame(image: UIImage) { lastFrame = image }
+    func sendToolResponse(_ r: GeminiToolResponse) {}
+
+    private func startSTT() {
+        speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "es-CO"))
+        engine = AVAudioEngine()
+        do {
+            let sess = AVAudioSession.sharedInstance()
+            try sess.setCategory(.record, mode: .measurement, options: .duckOthers)
+            try sess.setActive(true, options: .notifyOthersOnDeactivation)
+            recRequest = SFSpeechAudioBufferRecognitionRequest()
+            recRequest?.shouldReportPartialResults = true
+            recTask = speechRecognizer?.recognitionTask(with: recRequest!) { [weak self] res, _ in
+                guard let self, let res else { return }
+                let t = res.bestTranscription.formattedString
+                Task { @MainActor in
+                    self.pending = t
+                    self.onInputTranscription?(t)
+                    self.armTimer()
+                }
+            }
+            let node = engine!.inputNode
+            node.installTap(onBus: 0, bufferSize: 1024, format: node.outputFormat(forBus: 0)) { [weak self] b, _ in
+                self?.recRequest?.append(b)
+            }
+            engine!.prepare()
+            try engine!.start()
+        } catch {
+            connectionState = .error("Mic: \(error.localizedDescription)")
+        }
+    }
+
+    private func stopSTT() {
+        silenceTimer?.invalidate(); silenceTimer = nil
+        recTask?.cancel(); recTask = nil
+        recRequest?.endAudio(); recRequest = nil
+        engine?.stop(); engine?.inputNode.removeTap(onBus: 0); engine = nil
+    }
+
+    private func armTimer() {
+        silenceTimer?.invalidate()
+        silenceTimer = Timer.scheduledTimer(withTimeInterval: 1.8, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                let t = self.pending.trimmingCharacters(in: .whitespaces)
+                guard !t.isEmpty, !self.isModelSpeaking else { return }
+                self.pending = ""
+                await self.query(t)
+            }
+        }
+    }
+
+    private func query(_ text: String) async {
+        isModelSpeaking = true
+        stopSTT()
+        var prompt = text
+        if let img = lastFrame, let jpg = img.jpegData(compressionQuality: 0.4) {
+            prompt += "\n[Camera JPEG base64: data:image/jpeg;base64,\(jpg.base64EncodedString().prefix(800))]"
+        }
+        let result = await bridge.delegateTask(task: prompt)
+        switch result {
+        case .success(let reply):
+            onOutputTranscription?(reply)
+            await speak(reply)
+        case .failure(let e):
+            onOutputTranscription?("Error: \(e)")
+        }
+        isModelSpeaking = false
+        onTurnComplete?()
+        startSTT()
+    }
+
+    private func speak(_ text: String) async {
+        let sess = AVAudioSession.sharedInstance()
+        try? sess.setCategory(.playback, mode: .spokenAudio, options: .duckOthers)
+        try? sess.setActive(true)
+        let u = AVSpeechUtterance(string: text)
+        u.voice = AVSpeechSynthesisVoice(language: "es-CO") ?? AVSpeechSynthesisVoice(language: "es-ES")
+        u.rate = 0.53
+        synth.speak(u)
+        while synth.isSpeaking { try? await Task.sleep(nanoseconds: 100_000_000) }
     }
 }
