@@ -64,3 +64,12 @@ enum GeminiConfig {
       && openClawHost != "http://YOUR_MAC_HOSTNAME.local"
   }
 }
+
+// MARK: - Ares mode (no Gemini key required)
+extension GeminiConfig {
+    // Override: session always configured when using AresLiveService
+    static var isConfigured: Bool { true }
+    static var isOpenClawConfigured: Bool {
+        !Secrets.openClawHost.contains("YOUR_") && Secrets.openClawPort > 0
+    }
+}
