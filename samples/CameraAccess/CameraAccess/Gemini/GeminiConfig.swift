@@ -128,6 +128,9 @@ class AresLiveService: ObservableObject {
 
     func sendAudio(data: Data) {}
     func sendVideoFrame(image: UIImage) { lastFrame = image }
+    func sendTextMessage(_ text: String) {
+        Task { @MainActor in await self.query(text) }
+    }
     func sendToolResponse(_ r: GeminiToolResponse) {}
 
     private func startSTT() {
