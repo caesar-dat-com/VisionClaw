@@ -23,9 +23,10 @@ jobs:
           }
           EOF
 
-      - name: Build archive (unsigned — for ideviceinstaller/AltStore)
+      - name: Build archive (unsigned)
         run: |
           cd samples/CameraAccess
+          set -o pipefail
           xcodebuild \
             -project CameraAccess.xcodeproj \
             -scheme CameraAccess \
@@ -35,7 +36,19 @@ jobs:
             archive \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO 2>&1 | tail -30
+            CODE_SIGNING_ALLOWED=NO \
+            OTHER_SWIFT_FLAGS="-Xfrontend -debug-constraints" \
+            2>&1 | tee /tmp/xcodebuild.log
+          echo "--- ERRORS ---"
+          grep -E "error:" /tmp/xcodebuild.log || echo "(no error: lines found)"
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: /tmp/xcodebuild.log
+          retention-days: 3
 
       - name: Package IPA
         run: |
