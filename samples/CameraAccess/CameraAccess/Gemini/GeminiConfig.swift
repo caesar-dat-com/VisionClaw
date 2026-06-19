@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import AVFoundation
 import Speech
 
@@ -122,7 +123,7 @@ class AresLiveService: ObservableObject {
     func sendTextMessage(_ text: String) {
         Task { @MainActor in await self.query(text) }
     }
-    func sendToolResponse(_ r: GeminiToolResponse) {}
+    func sendToolResponse(_ r: [String: Any]) {}
 
     private func startSTT() {
         speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "es-CO"))
